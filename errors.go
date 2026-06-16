@@ -48,7 +48,7 @@ const (
 // HTTP status. Every typed error in this package wraps an *Error, so callers can
 // use errors.As to recover it, or the package helpers Code/Status/RequestID.
 //
-//	_, err := wao.Sessions(id).Messages.Send(msg)
+//	_, err := wao.Sessions(id).Messages.SendText(msg)
 //	if err != nil {
 //	    var rl *waotomatis.RateLimitError
 //	    if errors.As(err, &rl) {

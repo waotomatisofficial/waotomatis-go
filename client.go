@@ -1,13 +1,15 @@
 // Package waotomatis is the official Go SDK for WAOtomatis — headless WhatsApp
 // (WhatsApp Business / Cloud API) for developers.
 //
-// Construct a client with your API key and scope to a session to send messages:
+// Construct a client with your API key and scope to a session to send messages.
+// There is one method per message type (SendText, SendMedia, SendTemplate,
+// SendInteractive, SendReaction, SendLocation, SendContacts, SendCarousel), each
+// taking a focused typed input:
 //
 //	client := waotomatis.New(os.Getenv("WAO_API_KEY"))
 //
-//	msg, _ := client.Sessions("sess_123").Messages.Send(&waotomatis.Message{
+//	msg, _ := client.Sessions("sess_123").Messages.SendText(&waotomatis.TextMessage{
 //	    To:   "628123456789",
-//	    Type: "text",
 //	    Text: "Halo dari WAOtomatis 👋",
 //	})
 //
@@ -39,7 +41,7 @@ const (
 	defaultMaxRetries = 2
 	defaultTimeout    = 60 * time.Second
 	maxRetryAfter     = 60 * time.Second
-	userAgent         = "waotomatis-go/0.3.0"
+	userAgent         = "waotomatis-go/0.4.0"
 )
 
 // retryableStatus holds the only statuses that can plausibly succeed on an
@@ -130,7 +132,7 @@ func New(apiKey string, opts ...Option) *Client {
 
 // Sessions scopes the client to a single session:
 //
-//	client.Sessions("sess_123").Messages.Send(ctx, msg)
+//	client.Sessions("sess_123").Messages.SendText(&waotomatis.TextMessage{...})
 //
 // See SessionsService for the list/get/delete methods that are not session-scoped.
 func (c *Client) Sessions(id string) *SessionResource {
@@ -158,7 +160,7 @@ type CallOption func(*callOptions)
 // WithContext attaches a context.Context to one call for cancellation and
 // deadlines. Without it, calls use context.Background():
 //
-//	client.Sessions(id).Messages.Send(msg, waotomatis.WithContext(ctx))
+//	client.Sessions(id).Messages.SendText(msg, waotomatis.WithContext(ctx))
 func WithContext(ctx context.Context) CallOption {
 	return func(o *callOptions) { o.ctx = ctx }
 }

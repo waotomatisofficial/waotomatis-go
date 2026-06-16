@@ -27,22 +27,29 @@ const (
 	ModeCoexistence ConnectionMode = "coexistence"
 )
 
-// MessageType enumerates the kinds of message you can send.
-type MessageType string
+// MediaType is the kind of media in a MediaMessage (the `type` wire field on
+// POST /messages/media).
+type MediaType string
 
 const (
-	TypeText        MessageType = "text"
-	TypeImage       MessageType = "image"
-	TypeVideo       MessageType = "video"
-	TypeAudio       MessageType = "audio"
-	TypeDocument    MessageType = "document"
-	TypeSticker     MessageType = "sticker"
-	TypeTemplate    MessageType = "template"
-	TypeInteractive MessageType = "interactive"
-	TypeReaction    MessageType = "reaction"
-	TypeLocation    MessageType = "location"
-	TypeContacts    MessageType = "contacts"
-	TypeCarousel    MessageType = "carousel"
+	MediaImage    MediaType = "image"
+	MediaVideo    MediaType = "video"
+	MediaAudio    MediaType = "audio"
+	MediaDocument MediaType = "document"
+	MediaSticker  MediaType = "sticker"
+)
+
+// InteractiveType is the subtype of an InteractiveMessage (the `type` wire field
+// on POST /messages/interactive).
+type InteractiveType string
+
+const (
+	InteractiveTypeButton      InteractiveType = "button"
+	InteractiveTypeList        InteractiveType = "list"
+	InteractiveTypeCTAUrl      InteractiveType = "cta_url"
+	InteractiveTypeFlow        InteractiveType = "flow"
+	InteractiveTypeProduct     InteractiveType = "product"
+	InteractiveTypeProductList InteractiveType = "product_list"
 )
 
 // Session is a connected WhatsApp number.
@@ -60,64 +67,176 @@ type Session struct {
 	CreatedAt     string         `json:"createdAt"`
 }
 
-// Message is the input for Messages.Send. It is a flat struct (matching the
-// server's SendMessageInput) covering every message type; populate only the
-// fields relevant to Type. The compiler does not enforce per-type requirements,
-// but the server's validation does (text needs Text; media needs MediaID or
-// Link; template needs Template; interactive needs Interactive).
-type Message struct {
+// Each Send* method on MessageResource takes one of the focused input structs
+// below. They mirror the per-endpoint request bodies in the API contract: every
+// JSON field is exactly the camelCase wire key. The compiler does not enforce
+// per-type requirements (e.g. media needs MediaID or Link; interactive needs the
+// fields matching its subtype) — the server's validation does.
+//
+// IdempotencyKey, when set, is sent as the Idempotency-Key header (not in the
+// JSON body); an explicit WithIdempotencyKey CallOption still wins.
+
+// TextMessage is the input for MessageResource.SendText.
+type TextMessage struct {
 	// To is the recipient in E.164 (with or without a leading +). Required.
-	To string `json:"to"`
-	// Type is the message kind. Required.
-	Type MessageType `json:"type"`
-
-	// Text — for Type == "text".
-	Text string `json:"text,omitempty"`
+	To string
+	// Text is the message body. Required.
+	Text string
 	// PreviewURL renders a link preview for the first URL in Text.
-	PreviewURL bool `json:"previewUrl,omitempty"`
-
-	// MediaID references previously-uploaded media (image/video/audio/document/
-	// sticker). Provide exactly one of MediaID or Link.
-	MediaID string `json:"mediaId,omitempty"`
-	// Link is a public URL the server fetches at send time. Alternative to MediaID.
-	Link string `json:"link,omitempty"`
-	// Caption — for image/video/document.
-	Caption string `json:"caption,omitempty"`
-	// FileName — for document.
-	FileName string `json:"fileName,omitempty"`
-	// Voice sends audio as a voice note (PTT) rather than an audio file.
-	Voice bool `json:"voice,omitempty"`
-
-	// Template — for Type == "template".
-	Template *TemplateInput `json:"template,omitempty"`
-	// Interactive — for Type == "interactive".
-	Interactive *InteractiveInput `json:"interactive,omitempty"`
-
-	// Reaction — for Type == "reaction".
-	Reaction *ReactionInput `json:"reaction,omitempty"`
-	// Location — for Type == "location".
-	Location *LocationInput `json:"location,omitempty"`
-	// Contacts — for Type == "contacts". Each entry is a WhatsApp contact card
-	// (requires Name.FormattedName).
-	Contacts []ContactCard `json:"contacts,omitempty"`
-	// Carousel — for Type == "carousel".
-	Carousel *CarouselInput `json:"carousel,omitempty"`
-
+	PreviewURL bool
 	// ReplyTo quotes a prior message by its provider wamid.
-	ReplyTo string `json:"replyTo,omitempty"`
-
-	// IdempotencyKey dedupes retries; the same key returns the original result.
-	// It is sent as the Idempotency-Key header, not in the JSON body.
-	IdempotencyKey string `json:"-"`
+	ReplyTo string
+	// IdempotencyKey dedupes retries (sent as the Idempotency-Key header).
+	IdempotencyKey string
 }
 
-// TemplateInput is a pre-approved WhatsApp message template invocation.
-type TemplateInput struct {
-	Name         string `json:"name"`
-	LanguageCode string `json:"languageCode"`
+// MediaMessage is the input for MessageResource.SendMedia. Provide exactly one
+// of MediaID or Link.
+type MediaMessage struct {
+	// To is the recipient in E.164. Required.
+	To string
+	// Type is the media kind (image/video/audio/document/sticker). Required.
+	Type MediaType
+	// MediaID references previously-uploaded media. Provide MediaID or Link.
+	MediaID string
+	// Link is a public URL the server fetches at send time. Alternative to MediaID.
+	Link string
+	// Caption — for image/video/document.
+	Caption string
+	// FileName — for document.
+	FileName string
+	// Voice sends audio as a voice note (PTT) rather than an audio file.
+	Voice bool
+	// ReplyTo quotes a prior message by its provider wamid.
+	ReplyTo string
+	// IdempotencyKey dedupes retries (sent as the Idempotency-Key header).
+	IdempotencyKey string
+}
+
+// TemplateMessage is the input for MessageResource.SendTemplate — a pre-approved
+// WhatsApp message template invocation.
+type TemplateMessage struct {
+	// To is the recipient in E.164. Required.
+	To string
+	// Name is the approved template name. Required.
+	Name string
+	// LanguageCode is a BCP-47 code (e.g. "en_US", "id"). Required.
+	LanguageCode string
 	// Components holds the (provider-shaped) template components. Use any so
 	// callers can pass header/body/button parameter objects verbatim.
-	Components []any `json:"components,omitempty"`
+	Components []any
+	// ReplyTo quotes a prior message by its provider wamid.
+	ReplyTo string
+	// IdempotencyKey dedupes retries (sent as the Idempotency-Key header).
+	IdempotencyKey string
+}
+
+// InteractiveMessage is the input for MessageResource.SendInteractive. Type
+// selects the subtype; provide the matching fields:
+//
+//	"button"        — BodyText + Buttons
+//	"list"          — BodyText + ListButton + Sections
+//	"cta_url"       — BodyText + CTADisplayText + CTAUrl
+//	"flow"          — BodyText + Flow
+//	"product"       — CatalogID + ProductRetailerID
+//	"product_list"  — CatalogID + ProductSections
+//
+// matching the server's per-subtype rules (which it enforces).
+type InteractiveMessage struct {
+	// To is the recipient in E.164. Required.
+	To string
+	// Type is the interactive subtype. Required.
+	Type InteractiveType
+
+	BodyText   string
+	HeaderText string
+	FooterText string
+	Buttons    []InteractiveButton
+	ListButton string
+	Sections   []InteractiveListSection
+
+	// CTADisplayText and CTAUrl — for Type == "cta_url".
+	CTADisplayText string
+	CTAUrl         string
+
+	// Flow — for Type == "flow".
+	Flow *InteractiveFlow
+
+	// CatalogID — for Type == "product" or "product_list".
+	CatalogID string
+	// ProductRetailerID — for Type == "product".
+	ProductRetailerID string
+	// ProductSections — for Type == "product_list".
+	ProductSections []InteractiveProductSection
+
+	// ReplyTo quotes a prior message by its provider wamid.
+	ReplyTo string
+	// IdempotencyKey dedupes retries (sent as the Idempotency-Key header).
+	IdempotencyKey string
+}
+
+// ReactionMessage is the input for MessageResource.SendReaction. Emoji "" clears
+// an existing reaction. Reactions cannot quote a reply (no ReplyTo).
+type ReactionMessage struct {
+	// To is the recipient in E.164. Required.
+	To string
+	// MessageID is the provider wamid of the message to react to. Required.
+	MessageID string
+	// Emoji is the reaction; "" removes a previously-sent reaction.
+	Emoji string
+	// IdempotencyKey dedupes retries (sent as the Idempotency-Key header).
+	IdempotencyKey string
+}
+
+// LocationMessage is the input for MessageResource.SendLocation — a pinned
+// location.
+type LocationMessage struct {
+	// To is the recipient in E.164. Required.
+	To string
+	// Latitude in decimal degrees. Required.
+	Latitude float64
+	// Longitude in decimal degrees. Required.
+	Longitude float64
+	// Name is an optional place name.
+	Name string
+	// Address is an optional street address.
+	Address string
+	// ReplyTo quotes a prior message by its provider wamid.
+	ReplyTo string
+	// IdempotencyKey dedupes retries (sent as the Idempotency-Key header).
+	IdempotencyKey string
+}
+
+// ContactsMessage is the input for MessageResource.SendContacts. Each entry is a
+// WhatsApp contact card (requires Name.FormattedName).
+type ContactsMessage struct {
+	// To is the recipient in E.164. Required.
+	To string
+	// Contacts is the list of contact cards (at least one). Required.
+	Contacts []ContactCard
+	// ReplyTo quotes a prior message by its provider wamid.
+	ReplyTo string
+	// IdempotencyKey dedupes retries (sent as the Idempotency-Key header).
+	IdempotencyKey string
+}
+
+// CarouselMessage is the input for MessageResource.SendCarousel — a carousel
+// template invocation.
+type CarouselMessage struct {
+	// To is the recipient in E.164. Required.
+	To string
+	// Name is the carousel template name. Required.
+	Name string
+	// LanguageCode is a BCP-47 code (e.g. "en_US", "id"). Required.
+	LanguageCode string
+	// BodyParams fills the message bubble body params.
+	BodyParams []string
+	// Cards are the carousel cards (at least one). Required.
+	Cards []CarouselCard
+	// ReplyTo quotes a prior message by its provider wamid.
+	ReplyTo string
+	// IdempotencyKey dedupes retries (sent as the Idempotency-Key header).
+	IdempotencyKey string
 }
 
 // InteractiveButton is a single reply button (max 3 per message).
@@ -164,56 +283,7 @@ type InteractiveFlow struct {
 	Mode string `json:"mode,omitempty"`
 }
 
-// InteractiveInput is interactive content. Type selects the shape:
-//
-//	"button"        — use Buttons
-//	"list"          — use ListButton + Sections
-//	"cta_url"       — use BodyText + CTADisplayText + CTAUrl
-//	"flow"          — use BodyText + Flow
-//	"product"       — use CatalogID + ProductRetailerID
-//	"product_list"  — use HeaderText + BodyText + CatalogID + ProductSections
-//
-// matching the server's superRefine rules. The compiler does not enforce
-// per-type requirements; the server's validation does.
-type InteractiveInput struct {
-	Type       string                   `json:"type"`
-	BodyText   string                   `json:"bodyText,omitempty"`
-	HeaderText string                   `json:"headerText,omitempty"`
-	FooterText string                   `json:"footerText,omitempty"`
-	Buttons    []InteractiveButton      `json:"buttons,omitempty"`
-	ListButton string                   `json:"listButton,omitempty"`
-	Sections   []InteractiveListSection `json:"sections,omitempty"`
-
-	// CTADisplayText and CTAUrl — for Type == "cta_url".
-	CTADisplayText string `json:"ctaDisplayText,omitempty"`
-	CTAUrl         string `json:"ctaUrl,omitempty"`
-
-	// Flow — for Type == "flow".
-	Flow *InteractiveFlow `json:"flow,omitempty"`
-
-	// CatalogID — for Type == "product" or "product_list".
-	CatalogID string `json:"catalogId,omitempty"`
-	// ProductRetailerID — for Type == "product".
-	ProductRetailerID string `json:"productRetailerId,omitempty"`
-	// ProductSections — for Type == "product_list".
-	ProductSections []InteractiveProductSection `json:"productSections,omitempty"`
-}
-
-// ReactionInput reacts to a prior message. Emoji "" clears an existing reaction.
-type ReactionInput struct {
-	MessageID string `json:"messageId"`
-	Emoji     string `json:"emoji"`
-}
-
-// LocationInput is a pinned location.
-type LocationInput struct {
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
-	Name      string  `json:"name,omitempty"`
-	Address   string  `json:"address,omitempty"`
-}
-
-// ContactCard is a WhatsApp contact card (vCard) for Type == "contacts". Only
+// ContactCard is a WhatsApp contact card (vCard) for SendContacts. Only
 // Name.FormattedName is required; every other field is optional. Wire keys match
 // the WhatsApp Cloud API's snake_case contact shape (formatted_name, wa_id, …).
 //
@@ -298,15 +368,7 @@ type CarouselCard struct {
 	Buttons         []CarouselButton `json:"buttons,omitempty"`
 }
 
-// CarouselInput is a carousel template invocation.
-type CarouselInput struct {
-	Name         string         `json:"name"`
-	LanguageCode string         `json:"languageCode"`
-	BodyParams   []string       `json:"bodyParams,omitempty"`
-	Cards        []CarouselCard `json:"cards"`
-}
-
-// SendMessageResult is returned by Messages.Send.
+// SendMessageResult is returned by every MessageResource.Send* method.
 type SendMessageResult struct {
 	ID                string  `json:"id"`
 	EventID           string  `json:"eventId"`
@@ -337,6 +399,87 @@ type SimpleStatus struct {
 type DeleteResult struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
+}
+
+// TemplateCategory is the category of a message template.
+type TemplateCategory string
+
+const (
+	TemplateMarketing      TemplateCategory = "MARKETING"
+	TemplateUtility        TemplateCategory = "UTILITY"
+	TemplateAuthentication TemplateCategory = "AUTHENTICATION"
+)
+
+// Template is a WhatsApp message template as returned by Meta.
+//
+// Components is Meta's template-component array (HEADER / BODY / FOOTER /
+// BUTTONS objects); it is left loosely typed ([]map[string]any) so the full
+// provider shape passes through verbatim. QualityScore is provider-defined and
+// kept as raw JSON — decode it yourself if you need it.
+type Template struct {
+	ID         string           `json:"id"`
+	Name       string           `json:"name"`
+	Language   string           `json:"language"`
+	Status     string           `json:"status"`
+	Category   string           `json:"category"`
+	Components []map[string]any `json:"components,omitempty"`
+	// QualityScore is Meta's provider-defined quality block (raw JSON).
+	QualityScore json.RawMessage `json:"quality_score,omitempty"`
+}
+
+// TemplateList is the { data, paging? } envelope returned by Templates.List and
+// Templates.Get. Paging carries Meta's cursors (paging.cursors.before/after) and
+// is kept as raw JSON.
+type TemplateList struct {
+	Data   []Template      `json:"data"`
+	Paging json.RawMessage `json:"paging,omitempty"`
+}
+
+// TemplateListParams are the filter + pagination options for Templates.List.
+// All fields are optional; the zero value lists the first page unfiltered.
+type TemplateListParams struct {
+	// Limit caps the page size (1–100; 0 = server default).
+	Limit int
+	// After is Meta's pagination cursor (from paging.cursors.after).
+	After string
+	// Name filters to an exact template name.
+	Name string
+	// Language filters by BCP-47 code (e.g. "en_US", "id").
+	Language string
+	// Status filters by APPROVED | PENDING | REJECTED | PAUSED | DISABLED.
+	Status string
+	// Category filters by MARKETING | UTILITY | AUTHENTICATION.
+	Category string
+}
+
+// CreateTemplateInput submits a new template to Meta for approval. Components
+// follows Meta's template component schema (HEADER / BODY / FOOTER / BUTTONS)
+// and is left loosely typed so the provider shape passes through verbatim.
+type CreateTemplateInput struct {
+	// Name is lowercase letters, digits & underscores (e.g. "order_update").
+	Name string `json:"name"`
+	// Language is a BCP-47 code (e.g. "en_US", "id").
+	Language string `json:"language"`
+	// Category is one of the TemplateCategory constants.
+	Category TemplateCategory `json:"category"`
+	// Components is Meta's component array (at least one entry).
+	Components []map[string]any `json:"components"`
+	// AllowCategoryChange lets Meta re-categorize the template if needed.
+	AllowCategoryChange bool `json:"allowCategoryChange,omitempty"`
+}
+
+// TemplateCreateResult is the { id, status, category } envelope returned by
+// Templates.Create. Approval is asynchronous — poll Templates.List / Get and
+// watch Status (PENDING → APPROVED/REJECTED).
+type TemplateCreateResult struct {
+	ID       string `json:"id"`
+	Status   string `json:"status"`
+	Category string `json:"category"`
+}
+
+// TemplateDeleteResult is the { success } envelope returned by Templates.Delete.
+type TemplateDeleteResult struct {
+	Success bool `json:"success"`
 }
 
 // Chat is a conversation summary (last message + contact name per counterpart).

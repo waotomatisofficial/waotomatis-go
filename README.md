@@ -21,7 +21,6 @@ go get github.com/waotomatisofficial/waotomatis-go
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -31,9 +30,8 @@ import (
 func main() {
 	client := waotomatis.New(os.Getenv("WAO_API_KEY"))
 
-	msg, _ := client.Sessions("sess_123").Messages.Send(context.Background(), &waotomatis.Message{
+	msg, _ := client.Sessions("sess_123").Messages.SendText(&waotomatis.TextMessage{
 		To:   "628123456789",
-		Type: "text",
 		Text: "Halo dari WAOtomatis 👋",
 	})
 
@@ -68,45 +66,68 @@ stays terse). Attach one per call with `waotomatis.WithContext(ctx)` for
 cancellation and deadlines; without it, calls use `context.Background()`:
 
 ```go
-sess.Messages.Send(&waotomatis.Message{To: "62812...", Type: "text", Text: "hi"},
+sess.Messages.SendText(&waotomatis.TextMessage{To: "62812...", Text: "hi"},
 	waotomatis.WithContext(ctx))
 ```
 
 ## Sending messages
 
+There is one method per message type, each taking a focused, typed input and
+posting to its own endpoint. `Media` takes a `Type` (image/video/audio/document/
+sticker) and `Interactive` takes a `Type` (button/list/cta_url/flow/product/
+product_list) — these are fields, not separate methods.
+
 ```go
 sess := client.Sessions("sess_123")
 
-// Text with a link preview.
-sess.Messages.Send(&waotomatis.Message{
-	To: "628123456789", Type: waotomatis.TypeText,
-	Text: "https://waotomatis.com", PreviewURL: true,
+// 1. Text (optionally with a link preview).
+sess.Messages.SendText(&waotomatis.TextMessage{
+	To: "628123456789", Text: "https://waotomatis.com", PreviewURL: true,
 })
 
-// Media by uploaded media id.
-sess.Messages.Send(&waotomatis.Message{
-	To: "628123456789", Type: waotomatis.TypeImage,
+// 2. Media — by uploaded media id or public link. Type picks the kind.
+sess.Messages.SendMedia(&waotomatis.MediaMessage{
+	To: "628123456789", Type: waotomatis.MediaImage,
 	MediaID: "med_123", Caption: "Invoice",
 })
-
-// Media by public link.
-sess.Messages.Send(&waotomatis.Message{
-	To: "628123456789", Type: waotomatis.TypeDocument,
+sess.Messages.SendMedia(&waotomatis.MediaMessage{
+	To: "628123456789", Type: waotomatis.MediaDocument,
 	Link: "https://example.com/invoice.pdf", FileName: "invoice.pdf",
 })
 
-// A pinned location.
-sess.Messages.Send(&waotomatis.Message{
-	To: "628123456789", Type: waotomatis.TypeLocation,
-	Location: &waotomatis.LocationInput{
-		Latitude: -6.2088, Longitude: 106.8456,
-		Name: "Kantor Pusat", Address: "Jl. Sudirman, Jakarta",
+// 3. Template — a pre-approved template; Components passes through verbatim.
+sess.Messages.SendTemplate(&waotomatis.TemplateMessage{
+	To: "628123456789", Name: "order_update", LanguageCode: "en_US",
+	Components: []any{
+		map[string]any{"type": "body", "parameters": []any{
+			map[string]any{"type": "text", "text": "Budi"},
+		}},
 	},
 })
 
-// A contact card (vCard). Only Name.FormattedName is required.
-sess.Messages.Send(&waotomatis.Message{
-	To: "628123456789", Type: waotomatis.TypeContacts,
+// 4. Interactive — Type selects the subtype; provide the matching fields.
+sess.Messages.SendInteractive(&waotomatis.InteractiveMessage{
+	To: "628123456789", Type: waotomatis.InteractiveTypeButton,
+	BodyText: "Confirm your order?",
+	Buttons: []waotomatis.InteractiveButton{
+		{ID: "yes", Title: "Yes"}, {ID: "no", Title: "No"},
+	},
+})
+
+// 5. Reaction — react by wamid; an empty Emoji clears the reaction.
+sess.Messages.SendReaction(&waotomatis.ReactionMessage{
+	To: "628123456789", MessageID: "wamid.HBg...", Emoji: "👍",
+})
+
+// 6. Location — a pinned location.
+sess.Messages.SendLocation(&waotomatis.LocationMessage{
+	To: "628123456789", Latitude: -6.2088, Longitude: 106.8456,
+	Name: "Kantor Pusat", Address: "Jl. Sudirman, Jakarta",
+})
+
+// 7. Contacts — one or more contact cards (Name.FormattedName is required).
+sess.Messages.SendContacts(&waotomatis.ContactsMessage{
+	To: "628123456789",
 	Contacts: []waotomatis.ContactCard{{
 		Name:   waotomatis.ContactName{FormattedName: "Budi Santoso", FirstName: "Budi"},
 		Phones: []waotomatis.ContactPhone{{Phone: "+628123456789", Type: "WORK", WaID: "628123456789"}},
@@ -114,10 +135,21 @@ sess.Messages.Send(&waotomatis.Message{
 	}},
 })
 
-// Idempotent send (also accepts a per-call waotomatis.WithIdempotencyKey).
-sess.Messages.Send(&waotomatis.Message{
-	To: "628123456789", Type: waotomatis.TypeText, Text: "hi",
-	IdempotencyKey: "order-42",
+// 8. Carousel — a carousel template with cards.
+sess.Messages.SendCarousel(&waotomatis.CarouselMessage{
+	To: "628123456789", Name: "promo", LanguageCode: "id",
+	BodyParams: []string{"Budi"},
+	Cards: []waotomatis.CarouselCard{{
+		HeaderImageLink: "https://example.com/card.png",
+		BodyParams:      []string{"Diskon 20%"},
+		Buttons:         []waotomatis.CarouselButton{{SubType: "quick_reply", Index: 0, Payload: "buy"}},
+	}},
+})
+
+// Idempotent send: set IdempotencyKey on any input (or pass a per-call
+// waotomatis.WithIdempotencyKey, which wins).
+sess.Messages.SendText(&waotomatis.TextMessage{
+	To: "628123456789", Text: "hi", IdempotencyKey: "order-42",
 })
 
 // Mark an inbound message read by its provider wamid.
@@ -157,6 +189,55 @@ fmt.Println(res.MediaID) // pass to Message.MediaID
 // Download inbound media bytes.
 dl, _ := m.Download("med_inbound_123")
 os.WriteFile("cat.png", dl.Data, 0o644)
+```
+
+## Templates
+
+Manage the WhatsApp message templates on a session's WABA. `Components` is Meta's
+template-component array (`HEADER` / `BODY` / `FOOTER` / `BUTTONS` objects), left
+loosely typed (`[]map[string]any`) so the full provider shape passes through.
+
+```go
+tpls := client.Sessions("sess_123").Templates
+
+// List (filter + paginate). Pass nil for the first page unfiltered.
+list, _ := tpls.List(&waotomatis.TemplateListParams{
+	Limit: 50, Status: "APPROVED", Category: "MARKETING",
+})
+for _, t := range list.Data {
+	fmt.Println(t.Name, t.Language, t.Status)
+}
+// list.Paging carries Meta's cursors (paging.cursors.after) for the next page.
+
+// Get every language version of a template by exact name.
+got, _ := tpls.Get("promo_diskon")
+
+// Create (submitted to Meta for approval; status starts PENDING).
+res, _ := tpls.Create(&waotomatis.CreateTemplateInput{
+	Name:     "promo_diskon",
+	Language: "id",
+	Category: waotomatis.TemplateMarketing,
+	Components: []map[string]any{
+		{
+			"type": "BODY",
+			"text": "Halo {{1}}, ada diskon {{2}}% spesial untukmu!",
+			"example": map[string]any{
+				"body_text": [][]string{{"Budi", "20"}},
+			},
+		},
+		{
+			"type": "BUTTONS",
+			"buttons": []map[string]any{
+				{"type": "QUICK_REPLY", "text": "Lihat promo"},
+			},
+		},
+	},
+})
+fmt.Println(res.ID, res.Status) // poll List/Get until status is APPROVED
+
+// Delete by name (removes all language versions).
+del, _ := tpls.Delete("promo_diskon")
+fmt.Println(del.Success)
 ```
 
 ## Webhooks
@@ -209,7 +290,7 @@ Every failure is a typed error wrapping a `*waotomatis.Error`
 `Code` / `Status` / `RequestID` helpers.
 
 ```go
-_, err := client.Sessions("sess_123").Messages.Send(msg)
+_, err := client.Sessions("sess_123").Messages.SendText(msg)
 if err != nil {
 	var rl *waotomatis.RateLimitError
 	if errors.As(err, &rl) {

@@ -27,24 +27,27 @@ func TestSendText(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test_key" {
 			t.Errorf("auth header = %q", got)
 		}
-		if r.URL.Path != "/v1/sessions/sess_123/messages" || r.Method != http.MethodPost {
+		if r.URL.Path != "/v1/sessions/sess_123/messages/text" || r.Method != http.MethodPost {
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 		body, _ := io.ReadAll(r.Body)
 		var in map[string]any
 		_ = json.Unmarshal(body, &in)
-		if in["to"] != "628123456789" || in["type"] != "text" || in["text"] != "Halo" {
+		// "type" must NOT be on the wire for the per-type text endpoint.
+		if _, ok := in["type"]; ok {
+			t.Errorf("text body should not carry `type`: %s", body)
+		}
+		if in["to"] != "628123456789" || in["text"] != "Halo" || in["previewUrl"] != true {
 			t.Errorf("body = %s", body)
 		}
 		w.WriteHeader(201)
 		_, _ = w.Write([]byte(`{"id":"msg_abc123","eventId":"evt_1","status":"sent"}`))
 	})
 
-	// This is the exact shape advertised in Hero.astro for Go.
-	msg, err := c.Sessions("sess_123").Messages.Send(&waotomatis.Message{
-		To:   "628123456789",
-		Type: "text",
-		Text: "Halo",
+	msg, err := c.Sessions("sess_123").Messages.SendText(&waotomatis.TextMessage{
+		To:         "628123456789",
+		Text:       "Halo",
+		PreviewURL: true,
 	})
 	if err != nil {
 		t.Fatalf("send: %v", err)
@@ -54,17 +57,208 @@ func TestSendText(t *testing.T) {
 	}
 }
 
+func TestSendMedia(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions/s/messages/media" || r.Method != http.MethodPost {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var in map[string]any
+		_ = json.Unmarshal(body, &in)
+		if in["type"] != "image" || in["mediaId"] != "med_1" || in["caption"] != "Invoice" {
+			t.Errorf("body = %s", body)
+		}
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"id":"msg_m1","eventId":"e","status":"sent"}`))
+	})
+	msg, err := c.Sessions("s").Messages.SendMedia(&waotomatis.MediaMessage{
+		To: "1", Type: waotomatis.MediaImage, MediaID: "med_1", Caption: "Invoice",
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if msg.ID != "msg_m1" {
+		t.Errorf("id = %q", msg.ID)
+	}
+}
+
+func TestSendInteractive(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions/s/messages/interactive" || r.Method != http.MethodPost {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var in struct {
+			Type     string `json:"type"`
+			BodyText string `json:"bodyText"`
+			Buttons  []struct {
+				ID    string `json:"id"`
+				Title string `json:"title"`
+			} `json:"buttons"`
+		}
+		if err := json.Unmarshal(body, &in); err != nil {
+			t.Fatalf("unmarshal: %v (%s)", err, body)
+		}
+		if in.Type != "button" || in.BodyText != "Pick one" || len(in.Buttons) != 1 ||
+			in.Buttons[0].ID != "yes" || in.Buttons[0].Title != "Yes" {
+			t.Errorf("body = %s", body)
+		}
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"id":"msg_i1","eventId":"e","status":"sent"}`))
+	})
+	msg, err := c.Sessions("s").Messages.SendInteractive(&waotomatis.InteractiveMessage{
+		To:       "1",
+		Type:     waotomatis.InteractiveTypeButton,
+		BodyText: "Pick one",
+		Buttons:  []waotomatis.InteractiveButton{{ID: "yes", Title: "Yes"}},
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if msg.ID != "msg_i1" {
+		t.Errorf("id = %q", msg.ID)
+	}
+}
+
+func TestSendReactionEmptyEmojiClears(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions/s/messages/reaction" || r.Method != http.MethodPost {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var in map[string]any
+		_ = json.Unmarshal(body, &in)
+		// Empty emoji must still be emitted (it clears a reaction).
+		emoji, ok := in["emoji"]
+		if !ok || emoji != "" {
+			t.Errorf("emoji must be present and empty: %s", body)
+		}
+		if in["messageId"] != "wamid.X" {
+			t.Errorf("body = %s", body)
+		}
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"id":"msg_r1","eventId":"e","status":"sent"}`))
+	})
+	_, err := c.Sessions("s").Messages.SendReaction(&waotomatis.ReactionMessage{
+		To: "1", MessageID: "wamid.X", Emoji: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSendLocation(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions/s/messages/location" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var in struct {
+			Latitude  float64 `json:"latitude"`
+			Longitude float64 `json:"longitude"`
+			Name      string  `json:"name"`
+		}
+		_ = json.Unmarshal(body, &in)
+		if in.Latitude != -6.2088 || in.Longitude != 106.8456 || in.Name != "Kantor" {
+			t.Errorf("body = %s", body)
+		}
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"id":"msg_l1","eventId":"e","status":"sent"}`))
+	})
+	_, err := c.Sessions("s").Messages.SendLocation(&waotomatis.LocationMessage{
+		To: "1", Latitude: -6.2088, Longitude: 106.8456, Name: "Kantor",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSendCarousel(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions/s/messages/carousel" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var in struct {
+			Name         string `json:"name"`
+			LanguageCode string `json:"languageCode"`
+			Cards        []struct {
+				BodyParams []string `json:"bodyParams"`
+			} `json:"cards"`
+		}
+		_ = json.Unmarshal(body, &in)
+		if in.Name != "promo" || in.LanguageCode != "id" || len(in.Cards) != 1 {
+			t.Errorf("body = %s", body)
+		}
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"id":"msg_ca1","eventId":"e","status":"sent"}`))
+	})
+	_, err := c.Sessions("s").Messages.SendCarousel(&waotomatis.CarouselMessage{
+		To: "1", Name: "promo", LanguageCode: "id",
+		Cards: []waotomatis.CarouselCard{{BodyParams: []string{"Budi"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSendTemplate(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions/s/messages/template" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var in struct {
+			Name         string `json:"name"`
+			LanguageCode string `json:"languageCode"`
+		}
+		_ = json.Unmarshal(body, &in)
+		if in.Name != "order_update" || in.LanguageCode != "en_US" {
+			t.Errorf("body = %s", body)
+		}
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"id":"msg_t1","eventId":"e","status":"sent"}`))
+	})
+	_, err := c.Sessions("s").Messages.SendTemplate(&waotomatis.TemplateMessage{
+		To: "1", Name: "order_update", LanguageCode: "en_US",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestIdempotencyKeyHeader(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Idempotency-Key"); got != "key-1" {
 			t.Errorf("idempotency header = %q", got)
 		}
+		if r.URL.Path != "/v1/sessions/s/messages/text" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
 		w.WriteHeader(201)
 		_, _ = w.Write([]byte(`{"id":"m","eventId":"e","status":"sent"}`))
 	})
-	_, err := c.Sessions("s").Messages.Send(&waotomatis.Message{
-		To: "1", Type: "text", Text: "hi", IdempotencyKey: "key-1",
+	_, err := c.Sessions("s").Messages.SendText(&waotomatis.TextMessage{
+		To: "1", Text: "hi", IdempotencyKey: "key-1",
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIdempotencyKeyCallOptionWins(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		// An explicit WithIdempotencyKey CallOption overrides the input field.
+		if got := r.Header.Get("Idempotency-Key"); got != "override" {
+			t.Errorf("idempotency header = %q", got)
+		}
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"id":"m","eventId":"e","status":"sent"}`))
+	})
+	_, err := c.Sessions("s").Messages.SendText(
+		&waotomatis.TextMessage{To: "1", Text: "hi", IdempotencyKey: "from-input"},
+		waotomatis.WithIdempotencyKey("override"),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,9 +400,11 @@ func TestMarkRead(t *testing.T) {
 
 func TestSendContacts(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions/sess_123/messages/contacts" || r.Method != http.MethodPost {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
 		body, _ := io.ReadAll(r.Body)
 		var in struct {
-			Type     string `json:"type"`
 			Contacts []struct {
 				Name struct {
 					FormattedName string `json:"formatted_name"`
@@ -227,7 +423,7 @@ func TestSendContacts(t *testing.T) {
 		if err := json.Unmarshal(body, &in); err != nil {
 			t.Fatalf("unmarshal: %v (%s)", err, body)
 		}
-		if in.Type != "contacts" || len(in.Contacts) != 1 {
+		if len(in.Contacts) != 1 {
 			t.Fatalf("body = %s", body)
 		}
 		ct := in.Contacts[0]
@@ -245,9 +441,8 @@ func TestSendContacts(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"msg_c1","eventId":"evt_1","status":"sent"}`))
 	})
 
-	msg, err := c.Sessions("sess_123").Messages.Send(&waotomatis.Message{
-		To:   "628123456789",
-		Type: waotomatis.TypeContacts,
+	msg, err := c.Sessions("sess_123").Messages.SendContacts(&waotomatis.ContactsMessage{
+		To: "628123456789",
 		Contacts: []waotomatis.ContactCard{{
 			Name:   waotomatis.ContactName{FormattedName: "Budi Santoso", FirstName: "Budi"},
 			Phones: []waotomatis.ContactPhone{{Phone: "+628123456789", Type: "WORK", WaID: "628123456789"}},
@@ -259,6 +454,106 @@ func TestSendContacts(t *testing.T) {
 	}
 	if msg.ID != "msg_c1" {
 		t.Errorf("id = %q", msg.ID)
+	}
+}
+
+func TestTemplatesList(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions/sess_123/templates" || r.Method != http.MethodGet {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		q := r.URL.Query()
+		if q.Get("limit") != "50" || q.Get("status") != "APPROVED" || q.Get("category") != "MARKETING" {
+			t.Errorf("query = %s", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"t1","name":"promo","language":"id","status":"APPROVED","category":"MARKETING","components":[{"type":"BODY","text":"hi"}],"quality_score":{"score":"GREEN"}}],"paging":{"cursors":{"after":"c2"}}}`))
+	})
+	list, err := c.Sessions("sess_123").Templates.List(&waotomatis.TemplateListParams{
+		Limit: 50, Status: "APPROVED", Category: "MARKETING",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Data) != 1 || list.Data[0].Name != "promo" || list.Data[0].Status != "APPROVED" {
+		t.Errorf("data = %+v", list.Data)
+	}
+	if len(list.Data[0].Components) != 1 || list.Data[0].Components[0]["type"] != "BODY" {
+		t.Errorf("components = %+v", list.Data[0].Components)
+	}
+	if string(list.Paging) == "" || string(list.Data[0].QualityScore) == "" {
+		t.Errorf("paging=%s quality=%s", list.Paging, list.Data[0].QualityScore)
+	}
+}
+
+func TestTemplatesGet(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions/s/templates/promo_diskon" || r.Method != http.MethodGet {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"t1","name":"promo_diskon","language":"id","status":"APPROVED","category":"MARKETING"}]}`))
+	})
+	got, err := c.Sessions("s").Templates.Get("promo_diskon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Data) != 1 || got.Data[0].Name != "promo_diskon" {
+		t.Errorf("data = %+v", got.Data)
+	}
+}
+
+func TestTemplatesCreate(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions/s/templates" || r.Method != http.MethodPost {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		var in struct {
+			Name       string           `json:"name"`
+			Language   string           `json:"language"`
+			Category   string           `json:"category"`
+			Components []map[string]any `json:"components"`
+		}
+		if err := json.Unmarshal(body, &in); err != nil {
+			t.Fatalf("unmarshal: %v (%s)", err, body)
+		}
+		if in.Name != "promo_diskon" || in.Language != "id" || in.Category != "MARKETING" {
+			t.Errorf("body = %s", body)
+		}
+		if len(in.Components) != 1 || in.Components[0]["type"] != "BODY" {
+			t.Errorf("components = %+v", in.Components)
+		}
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"id":"t_new","status":"PENDING","category":"MARKETING"}`))
+	})
+	res, err := c.Sessions("s").Templates.Create(&waotomatis.CreateTemplateInput{
+		Name:     "promo_diskon",
+		Language: "id",
+		Category: waotomatis.TemplateMarketing,
+		Components: []map[string]any{
+			{"type": "BODY", "text": "Halo {{1}}"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ID != "t_new" || res.Status != "PENDING" {
+		t.Errorf("res = %+v", res)
+	}
+}
+
+func TestTemplatesDelete(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/sessions/s/templates/promo_diskon" || r.Method != http.MethodDelete {
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"success":true}`))
+	})
+	res, err := c.Sessions("s").Templates.Delete("promo_diskon")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Success {
+		t.Errorf("success = %v", res.Success)
 	}
 }
 
