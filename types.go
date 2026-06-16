@@ -39,6 +39,10 @@ const (
 	TypeSticker     MessageType = "sticker"
 	TypeTemplate    MessageType = "template"
 	TypeInteractive MessageType = "interactive"
+	TypeReaction    MessageType = "reaction"
+	TypeLocation    MessageType = "location"
+	TypeContacts    MessageType = "contacts"
+	TypeCarousel    MessageType = "carousel"
 )
 
 // Session is a connected WhatsApp number.
@@ -89,6 +93,16 @@ type Message struct {
 	// Interactive — for Type == "interactive".
 	Interactive *InteractiveInput `json:"interactive,omitempty"`
 
+	// Reaction — for Type == "reaction".
+	Reaction *ReactionInput `json:"reaction,omitempty"`
+	// Location — for Type == "location".
+	Location *LocationInput `json:"location,omitempty"`
+	// Contacts — for Type == "contacts". Each entry is a WhatsApp contact-card
+	// object (requires name.formatted_name); passed through to the server as-is.
+	Contacts []any `json:"contacts,omitempty"`
+	// Carousel — for Type == "carousel".
+	Carousel *CarouselInput `json:"carousel,omitempty"`
+
 	// ReplyTo quotes a prior message by its provider wamid.
 	ReplyTo string `json:"replyTo,omitempty"`
 
@@ -125,8 +139,42 @@ type InteractiveListSection struct {
 	Rows  []InteractiveListRow `json:"rows"`
 }
 
-// InteractiveInput is interactive content. Type is "button" (use Buttons) or
-// "list" (use Sections), matching the server's superRefine rules.
+// InteractiveProductSection is a product_list section (must hold at least one
+// product item).
+type InteractiveProductSection struct {
+	Title        string                   `json:"title,omitempty"`
+	ProductItems []InteractiveProductItem `json:"productItems"`
+}
+
+// InteractiveProductItem references a single catalog product by its retailer id.
+type InteractiveProductItem struct {
+	ProductRetailerID string `json:"productRetailerId"`
+}
+
+// InteractiveFlow configures a Flow-type interactive message (the flow CTA and
+// its launch parameters).
+type InteractiveFlow struct {
+	FlowCTA   string `json:"flowCta"`
+	FlowID    string `json:"flowId,omitempty"`
+	FlowToken string `json:"flowToken,omitempty"`
+	// FlowAction is "navigate" or "data_exchange".
+	FlowAction        string `json:"flowAction,omitempty"`
+	FlowActionPayload any    `json:"flowActionPayload,omitempty"`
+	// Mode is "draft" or "published".
+	Mode string `json:"mode,omitempty"`
+}
+
+// InteractiveInput is interactive content. Type selects the shape:
+//
+//	"button"        — use Buttons
+//	"list"          — use ListButton + Sections
+//	"cta_url"       — use BodyText + CTADisplayText + CTAUrl
+//	"flow"          — use BodyText + Flow
+//	"product"       — use CatalogID + ProductRetailerID
+//	"product_list"  — use HeaderText + BodyText + CatalogID + ProductSections
+//
+// matching the server's superRefine rules. The compiler does not enforce
+// per-type requirements; the server's validation does.
 type InteractiveInput struct {
 	Type       string                   `json:"type"`
 	BodyText   string                   `json:"bodyText,omitempty"`
@@ -135,6 +183,62 @@ type InteractiveInput struct {
 	Buttons    []InteractiveButton      `json:"buttons,omitempty"`
 	ListButton string                   `json:"listButton,omitempty"`
 	Sections   []InteractiveListSection `json:"sections,omitempty"`
+
+	// CTADisplayText and CTAUrl — for Type == "cta_url".
+	CTADisplayText string `json:"ctaDisplayText,omitempty"`
+	CTAUrl         string `json:"ctaUrl,omitempty"`
+
+	// Flow — for Type == "flow".
+	Flow *InteractiveFlow `json:"flow,omitempty"`
+
+	// CatalogID — for Type == "product" or "product_list".
+	CatalogID string `json:"catalogId,omitempty"`
+	// ProductRetailerID — for Type == "product".
+	ProductRetailerID string `json:"productRetailerId,omitempty"`
+	// ProductSections — for Type == "product_list".
+	ProductSections []InteractiveProductSection `json:"productSections,omitempty"`
+}
+
+// ReactionInput reacts to a prior message. Emoji "" clears an existing reaction.
+type ReactionInput struct {
+	MessageID string `json:"messageId"`
+	Emoji     string `json:"emoji"`
+}
+
+// LocationInput is a pinned location.
+type LocationInput struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+	Name      string  `json:"name,omitempty"`
+	Address   string  `json:"address,omitempty"`
+}
+
+// CarouselButton is a button on a carousel card. SubType is "quick_reply" or
+// "url".
+type CarouselButton struct {
+	SubType  string `json:"subType"`
+	Index    int    `json:"index"`
+	Payload  string `json:"payload,omitempty"`
+	URLParam string `json:"urlParam,omitempty"`
+}
+
+// CarouselCard is a single card in a carousel template. Provide at most one
+// header media field (image id/link or video id/link).
+type CarouselCard struct {
+	HeaderImageID   string           `json:"headerImageId,omitempty"`
+	HeaderImageLink string           `json:"headerImageLink,omitempty"`
+	HeaderVideoID   string           `json:"headerVideoId,omitempty"`
+	HeaderVideoLink string           `json:"headerVideoLink,omitempty"`
+	BodyParams      []string         `json:"bodyParams,omitempty"`
+	Buttons         []CarouselButton `json:"buttons,omitempty"`
+}
+
+// CarouselInput is a carousel template invocation.
+type CarouselInput struct {
+	Name         string         `json:"name"`
+	LanguageCode string         `json:"languageCode"`
+	BodyParams   []string       `json:"bodyParams,omitempty"`
+	Cards        []CarouselCard `json:"cards"`
 }
 
 // SendMessageResult is returned by Messages.Send.
