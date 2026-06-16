@@ -95,6 +95,25 @@ sess.Messages.Send(&waotomatis.Message{
 	Link: "https://example.com/invoice.pdf", FileName: "invoice.pdf",
 })
 
+// A pinned location.
+sess.Messages.Send(&waotomatis.Message{
+	To: "628123456789", Type: waotomatis.TypeLocation,
+	Location: &waotomatis.LocationInput{
+		Latitude: -6.2088, Longitude: 106.8456,
+		Name: "Kantor Pusat", Address: "Jl. Sudirman, Jakarta",
+	},
+})
+
+// A contact card (vCard). Only Name.FormattedName is required.
+sess.Messages.Send(&waotomatis.Message{
+	To: "628123456789", Type: waotomatis.TypeContacts,
+	Contacts: []waotomatis.ContactCard{{
+		Name:   waotomatis.ContactName{FormattedName: "Budi Santoso", FirstName: "Budi"},
+		Phones: []waotomatis.ContactPhone{{Phone: "+628123456789", Type: "WORK", WaID: "628123456789"}},
+		Org:    &waotomatis.ContactOrg{Company: "WAOtomatis"},
+	}},
+})
+
 // Idempotent send (also accepts a per-call waotomatis.WithIdempotencyKey).
 sess.Messages.Send(&waotomatis.Message{
 	To: "628123456789", Type: waotomatis.TypeText, Text: "hi",

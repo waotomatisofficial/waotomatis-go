@@ -97,9 +97,9 @@ type Message struct {
 	Reaction *ReactionInput `json:"reaction,omitempty"`
 	// Location — for Type == "location".
 	Location *LocationInput `json:"location,omitempty"`
-	// Contacts — for Type == "contacts". Each entry is a WhatsApp contact-card
-	// object (requires name.formatted_name); passed through to the server as-is.
-	Contacts []any `json:"contacts,omitempty"`
+	// Contacts — for Type == "contacts". Each entry is a WhatsApp contact card
+	// (requires Name.FormattedName).
+	Contacts []ContactCard `json:"contacts,omitempty"`
 	// Carousel — for Type == "carousel".
 	Carousel *CarouselInput `json:"carousel,omitempty"`
 
@@ -211,6 +211,71 @@ type LocationInput struct {
 	Longitude float64 `json:"longitude"`
 	Name      string  `json:"name,omitempty"`
 	Address   string  `json:"address,omitempty"`
+}
+
+// ContactCard is a WhatsApp contact card (vCard) for Type == "contacts". Only
+// Name.FormattedName is required; every other field is optional. Wire keys match
+// the WhatsApp Cloud API's snake_case contact shape (formatted_name, wa_id, …).
+//
+// (Distinct from Contact, which is a cached counterpart returned by the contacts
+// list endpoint.)
+type ContactCard struct {
+	Name      ContactName      `json:"name"`
+	Phones    []ContactPhone   `json:"phones,omitempty"`
+	Emails    []ContactEmail   `json:"emails,omitempty"`
+	Org       *ContactOrg      `json:"org,omitempty"`
+	URLs      []ContactURL     `json:"urls,omitempty"`
+	Addresses []ContactAddress `json:"addresses,omitempty"`
+	// Birthday in YYYY-MM-DD form.
+	Birthday string `json:"birthday,omitempty"`
+}
+
+// ContactName is the name block of a contact card. FormattedName is required.
+type ContactName struct {
+	FormattedName string `json:"formatted_name"`
+	FirstName     string `json:"first_name,omitempty"`
+	LastName      string `json:"last_name,omitempty"`
+	MiddleName    string `json:"middle_name,omitempty"`
+	Suffix        string `json:"suffix,omitempty"`
+	Prefix        string `json:"prefix,omitempty"`
+}
+
+// ContactPhone is a phone entry on a contact card. WaID, when set, links the
+// number to its WhatsApp account.
+type ContactPhone struct {
+	Phone string `json:"phone,omitempty"`
+	Type  string `json:"type,omitempty"`
+	WaID  string `json:"wa_id,omitempty"`
+}
+
+// ContactEmail is an email entry on a contact card.
+type ContactEmail struct {
+	Email string `json:"email,omitempty"`
+	Type  string `json:"type,omitempty"`
+}
+
+// ContactOrg is the organization block of a contact card.
+type ContactOrg struct {
+	Company    string `json:"company,omitempty"`
+	Department string `json:"department,omitempty"`
+	Title      string `json:"title,omitempty"`
+}
+
+// ContactURL is a URL entry on a contact card.
+type ContactURL struct {
+	URL  string `json:"url,omitempty"`
+	Type string `json:"type,omitempty"`
+}
+
+// ContactAddress is a postal address entry on a contact card.
+type ContactAddress struct {
+	Street      string `json:"street,omitempty"`
+	City        string `json:"city,omitempty"`
+	State       string `json:"state,omitempty"`
+	Zip         string `json:"zip,omitempty"`
+	Country     string `json:"country,omitempty"`
+	CountryCode string `json:"country_code,omitempty"`
+	Type        string `json:"type,omitempty"`
 }
 
 // CarouselButton is a button on a carousel card. SubType is "quick_reply" or

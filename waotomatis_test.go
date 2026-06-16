@@ -204,6 +204,64 @@ func TestMarkRead(t *testing.T) {
 	}
 }
 
+func TestSendContacts(t *testing.T) {
+	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var in struct {
+			Type     string `json:"type"`
+			Contacts []struct {
+				Name struct {
+					FormattedName string `json:"formatted_name"`
+					FirstName     string `json:"first_name"`
+				} `json:"name"`
+				Phones []struct {
+					Phone string `json:"phone"`
+					Type  string `json:"type"`
+					WaID  string `json:"wa_id"`
+				} `json:"phones"`
+				Org *struct {
+					Company string `json:"company"`
+				} `json:"org"`
+			} `json:"contacts"`
+		}
+		if err := json.Unmarshal(body, &in); err != nil {
+			t.Fatalf("unmarshal: %v (%s)", err, body)
+		}
+		if in.Type != "contacts" || len(in.Contacts) != 1 {
+			t.Fatalf("body = %s", body)
+		}
+		ct := in.Contacts[0]
+		if ct.Name.FormattedName != "Budi Santoso" || ct.Name.FirstName != "Budi" {
+			t.Errorf("name = %+v", ct.Name)
+		}
+		if len(ct.Phones) != 1 || ct.Phones[0].Phone != "+628123456789" ||
+			ct.Phones[0].Type != "WORK" || ct.Phones[0].WaID != "628123456789" {
+			t.Errorf("phones = %+v", ct.Phones)
+		}
+		if ct.Org == nil || ct.Org.Company != "WAOtomatis" {
+			t.Errorf("org = %+v", ct.Org)
+		}
+		w.WriteHeader(201)
+		_, _ = w.Write([]byte(`{"id":"msg_c1","eventId":"evt_1","status":"sent"}`))
+	})
+
+	msg, err := c.Sessions("sess_123").Messages.Send(&waotomatis.Message{
+		To:   "628123456789",
+		Type: waotomatis.TypeContacts,
+		Contacts: []waotomatis.ContactCard{{
+			Name:   waotomatis.ContactName{FormattedName: "Budi Santoso", FirstName: "Budi"},
+			Phones: []waotomatis.ContactPhone{{Phone: "+628123456789", Type: "WORK", WaID: "628123456789"}},
+			Org:    &waotomatis.ContactOrg{Company: "WAOtomatis"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if msg.ID != "msg_c1" {
+		t.Errorf("id = %q", msg.ID)
+	}
+}
+
 func TestWithContextCancel(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done() // never respond; wait for cancel

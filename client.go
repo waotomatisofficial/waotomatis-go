@@ -39,7 +39,7 @@ const (
 	defaultMaxRetries = 2
 	defaultTimeout    = 60 * time.Second
 	maxRetryAfter     = 60 * time.Second
-	userAgent         = "waotomatis-go/0.1.0"
+	userAgent         = "waotomatis-go/0.3.0"
 )
 
 // retryableStatus holds the only statuses that can plausibly succeed on an
